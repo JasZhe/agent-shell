@@ -527,7 +527,8 @@ Each element can be:
                                               default-model-id
                                               default-session-mode-id
                                               icon-name
-                                              install-instructions)
+                                              install-instructions
+                                              request-handlers)
   "Create an agent configuration alist.
 
 Keyword arguments:
@@ -544,6 +545,10 @@ Keyword arguments:
 - DEFAULT-SESSION-MODE-ID: Default session mode ID (function returning value).
 - ICON-NAME: Name of the icon to use
 - INSTALL-INSTRUCTIONS: Instructions to show when executable is not found
+- REQUEST-HANDLERS: Alist of (method-string . handler-function) for custom ACP
+  request methods.  Handler receives (state acp-request), must call
+  `acp-send-response' with a valid JSON-RPC response, and return non-nil if
+  handled.  Return nil to fall through to built-in handlers.
 
 Returns an alist with all specified values."
   `((:identifier . ,identifier)
@@ -558,7 +563,8 @@ Returns an alist with all specified values."
     (:default-model-id . ,default-model-id)                     ;; function
     (:default-session-mode-id . ,default-session-mode-id)       ;; function
     (:icon-name . ,icon-name)
-    (:install-instructions . ,install-instructions)))
+    (:install-instructions . ,install-instructions)
+    (:request-handlers . ,request-handlers)))
 
 (defun agent-shell--make-default-agent-configs ()
   "Create a list of default agent configs.
@@ -2173,6 +2179,11 @@ pretty-printed JSON inside a json fence."
 
 (cl-defun agent-shell--on-request (&key state acp-request)
   "Handle incoming ACP-REQUEST using STATE."
+  (let ((method (map-elt acp-request 'method))
+        (handlers (map-nested-elt (map-elt state :agent-config) '(:request-handlers))))
+    (when-let ((handler (and handlers (alist-get method handlers nil nil #'string=))))
+      (when (funcall handler state acp-request)
+        (cl-return-from agent-shell--on-request))))
   (cond ((equal (map-elt acp-request 'method) "session/request_permission")
          (agent-shell--save-tool-call
           state (map-nested-elt acp-request '(params toolCall toolCallId))
