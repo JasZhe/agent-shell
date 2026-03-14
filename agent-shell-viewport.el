@@ -631,10 +631,16 @@ With EXISTING-ONLY, only return existing buffers without creating."
         (setq agent-shell-viewport--compose-snapshot nil))
       (when block-quoted-text
         (goto-char (point-max))
-        (insert (if snapshot "\n\n" "") block-quoted-text))
+        (insert (if snapshot
+                    "\n\n"
+                  "") block-quoted-text))
+      ;; Skip past any read-only layout text (e.g. the newline
+      ;; inserted by `agent-shell-viewport--initialize') so buffer
+      ;; is ready to insert text.
       (goto-char (if (or snapshot block-quoted-text)
                      (point-max)
-                   (point-min))))
+                   (or (next-single-property-change (point-min) 'read-only)
+                       (point-max)))))
     ;; Setting point isn't enough at times. Force scrolling.
     (set-window-start (selected-window) (point-min))))
 
