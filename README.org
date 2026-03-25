@@ -260,6 +260,19 @@ For API key authentication:
        :api-key (lambda () (auth-source-pass-get 'secret "anthropic-api-key"))))
 #+end_src
 
+For OAuth token authentication (the =CLAUDE_CODE_OAUTH_TOKEN= we get from =claude setup-token=):
+
+#+begin_src emacs-lisp
+;; With string
+(setq agent-shell-anthropic-authentication
+      (agent-shell-anthropic-make-authentication :oauth "your-oauth-token-here"))
+
+;; With function
+(setq agent-shell-anthropic-authentication
+      (agent-shell-anthropic-make-authentication
+       :oauth (lambda () (auth-source-pass-get "secret" "anthropic-oauth-token"))))
+#+end_src
+
 For alternative Anthropic-compatible API endpoints, configure via environment variables:
 
 #+begin_src emacs-lisp
@@ -501,6 +514,13 @@ For example, to store data under =user-emacs-directory= instead of the project t
 #+end_src
 
 This stores data at a path like =~/.emacs.d/agent-shell/home-user-src-myproject/screenshots/=.
+
+*** Screenshots from clipboard
+
+You can send a screenshot from your clipboard to your shell with =agent-shell-send-clipboard-image=. Call with =C-u= to =agent-shell-send-clipboard-image-to= to select from your shells. agent-shell relies on external programs to write an image from clipboard to file as configured in =agent-shell-clipboard-image-handlers=. Preconfigured handlers are
+- =wl-paste= for Wayland desktops,
+- =xclip= for Xorg,
+- =pngpaste= for MacOS.
 
 *** Inhibiting minor modes during file writes
 
