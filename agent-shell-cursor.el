@@ -29,6 +29,7 @@
   (require 'cl-lib))
 (require 'shell-maker)
 (require 'acp)
+(require 'agent-shell-subagents)
 
 (declare-function agent-shell--indent-string "agent-shell")
 (declare-function agent-shell-welcome-message "agent-shell")
@@ -290,7 +291,15 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
    :client-maker (lambda (buffer)
                    (agent-shell-cursor-make-client :buffer buffer))
    :notification-adapter #'agent-shell-cursor--notification-adapter
+   :client-capabilities '((_meta . ((subagents . t))))
+   :notification-handler #'agent-shell-cursor--notification-handler
+   :request-handler #'agent-shell-subagents--legacy-task
    :install-instructions "See https://cursor.com/docs/cli for installation."))
+
+(defun agent-shell-cursor--notification-handler (event)
+  "Handle Cursor extension and child-session notifications in EVENT."
+  (or (agent-shell-subagents--notification event)
+      (equal (map-nested-elt event '(:acp-notification method)) "cursor/task")))
 
 ;;;###autoload
 (defun agent-shell-cursor-start-agent ()

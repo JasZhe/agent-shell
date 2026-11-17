@@ -768,6 +768,8 @@ Each element can be:
                                               default-config-options
                                               session-meta
                                               mcp-servers
+                                              client-capabilities
+                                              request-handler
                                               notification-adapter
                                               notification-handler
                                               icon-name
@@ -805,6 +807,9 @@ Keyword arguments:
   that variable.
 - NOTIFICATION-ADAPTER: Optional function called with `:acp-notification'.
   Return the original or a normalized notification for further handling.
+- CLIENT-CAPABILITIES: Additional ACP client capabilities, as an alist.
+- REQUEST-HANDLER: Optional function receiving an alist of `:state' and
+  `:acp-request'.  Return non-nil when handled, including sending a response.
 - NOTIFICATION-HANDLER: Optional function called after adaptation with an
   alist of `:state' and `:acp-notification'.  Return non-nil if handled,
   skipping core handling, or nil to let core handle it.
@@ -826,6 +831,8 @@ Returns an alist with all specified values."
     (:default-config-options . ,default-config-options)         ;; function
     (:session-meta . ,session-meta)
     (:mcp-servers . ,mcp-servers)
+    (:client-capabilities . ,client-capabilities)
+    (:request-handler . ,request-handler)
     (:notification-adapter . ,notification-adapter)            ;; function
     (:notification-handler . ,notification-handler)            ;; function
     (:icon-name . ,icon-name)
@@ -1357,6 +1364,7 @@ OUTGOING-REQUEST-DECORATOR (passed through to `acp-make-client')."
         (cons :request-count 0)
         (cons :last-activity-time nil)
         (cons :tool-calls nil)
+        (cons :subagents nil)
         (cons :elicitations nil)
         (cons :available-commands nil)
         (cons :available-modes nil)
@@ -3951,7 +3959,9 @@ Clears STATE's `:expanded-activity-group'."
 
 (cl-defun agent-shell--on-request (&key state acp-request)
   "Handle incoming ACP-REQUEST using STATE."
-  (cond ((equal (map-elt acp-request 'method) "session/request_permission")
+  (cond ((when-let* ((handler (map-nested-elt state '(:agent-config :request-handler))))
+           (funcall handler `((:state . ,state) (:acp-request . ,acp-request)))))
+        ((equal (map-elt acp-request 'method) "session/request_permission")
          (agent-shell--save-tool-call
           state (map-nested-elt acp-request '(params toolCall toolCallId))
           (append (list (cons :title (map-nested-elt acp-request '(params toolCall title)))
@@ -7176,6 +7186,8 @@ triggering message only (for `tool-call-update', the latest update
 rather than the whole tool call).
 
 Session events:
+  `subagent-update'       - Child session spawned or changed state
+    :data contains :subagent (child ID, parent ID, state and output buffer)
   `tool-call-update'      - Tool call started or updated
     :data contains :tool-call-id, :tool-call and :meta
   `config-option-update'  - ACP config option(s) changed
@@ -7514,6 +7526,22 @@ through to `acp-send-request'."
                    (funcall on-failure acp-error raw-message)))
    :sync sync))
 
+(defun agent-shell--make-initialize-request (state)
+  "Build the initialize request with STATE's additional client capabilities."
+  (let ((request (acp-make-initialize-request
+                  :protocol-version 1
+                  :client-info `((name . "agent-shell")
+                                 (title . "Emacs Agent Shell")
+                                 (version . ,agent-shell--version))
+                  :read-text-file-capability agent-shell-text-file-capabilities
+                  :write-text-file-capability agent-shell-text-file-capabilities
+                  :elicitation-form-capability agent-shell-elicitation--experimental-feature-enabled)))
+    (dolist (capability (map-nested-elt state '(:agent-config :client-capabilities)))
+      (setf (alist-get (car capability)
+                       (alist-get 'clientCapabilities (alist-get :params request)))
+            (cdr capability)))
+    request))
+
 (cl-defun agent-shell--initiate-handshake (&key shell-buffer on-initiated)
   "Initiate ACP handshake with SHELL-BUFFER.
 
@@ -7529,14 +7557,7 @@ Must provide ON-INITIATED (lambda ())."
   (agent-shell--send-request
    :state agent-shell--state
    :client (map-elt agent-shell--state :client)
-   :request (acp-make-initialize-request
-             :protocol-version 1
-             :client-info `((name . "agent-shell")
-                            (title . "Emacs Agent Shell")
-                            (version . ,agent-shell--version))
-             :read-text-file-capability agent-shell-text-file-capabilities
-             :write-text-file-capability agent-shell-text-file-capabilities
-             :elicitation-form-capability agent-shell-elicitation--experimental-feature-enabled)
+   :request (agent-shell--make-initialize-request agent-shell--state)
    :on-success (lambda (acp-response)
                  (with-current-buffer shell-buffer
                    (let ((acp-session-capabilities (or (map-elt acp-response 'sessionCapabilities)

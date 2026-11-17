@@ -175,6 +175,26 @@ See also the [[https://zed.dev/acp/agent/grok-build][Zed ACP registry listing]] 
 
 For Cursor agent, install the official [[https://cursor.com/docs/cli][Cursor CLI]] and ensure the =agent= executable is in PATH. =agent-shell= uses its official ACP server (=agent acp=).
 
+Cursor sessions advertise support for child subagent sessions. With a
+compatible Cursor CLI, the parent turn waits for background subagents and
+receives their results. Each child gets a status section in the parent
+shell and a separate read-only output buffer. Use
+=M-x agent-shell-subagents-open= from the parent shell to select a child
+and inspect its streamed messages, thoughts, and tool output. Permission
+requests continue to appear in the parent shell; interrupting the parent
+turn lets Cursor cancel its children.
+
+Child lifecycle changes emit =subagent-update= events through
+=agent-shell-subscribe-to=. The event's =:data :subagent= alist includes
+=:id=, =:parent-id=, =:tool-call-id=, =:state=, and =:buffer=. Child states
+include =running=, =completed=, =failed=, =cancelled=, and =disconnected=.
+A Task tool completing with =isBackground= only means the launch finished;
+use the child lifecycle state to observe actual completion.
+
+Older Cursor =cursor/task= UI requests are acknowledged for compatibility.
+Those messages alone do not provide child output or completion tracking.
+Start a new shell after updating so the capability is negotiated again.
+
 A recent Cursor CLI is required (the =acp= subcommand was added in 2026). Older CLIs won't expose =agent acp=.
 
 *** Kimi Code CLI
