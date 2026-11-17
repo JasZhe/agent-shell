@@ -1364,6 +1364,7 @@ OUTGOING-REQUEST-DECORATOR (passed through to `acp-make-client')."
         (cons :request-count 0)
         (cons :last-activity-time nil)
         (cons :tool-calls nil)
+        (cons :todos nil)
         (cons :subagents nil)
         (cons :elicitations nil)
         (cons :available-commands nil)

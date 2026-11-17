@@ -37,6 +37,8 @@
 (autoload 'agent-shell-make-agent-config "agent-shell")
 (declare-function agent-shell--make-acp-client "agent-shell")
 (declare-function agent-shell--dwim "agent-shell")
+(declare-function agent-shell--emit-event "agent-shell")
+(declare-function agent-shell--update-fragment "agent-shell")
 
 (cl-defun agent-shell-cursor-make-authentication (&key api-key auth-token login none)
   "Create Cursor authentication configuration.
@@ -269,6 +271,100 @@ Examples:
           content))
   acp-notification)
 
+(defun agent-shell-cursor--normalize-todo (todo)
+  "Convert Cursor TODO protocol data to internal state.
+
+Return nil when TODO has no usable content."
+  (when-let* ((content (or (map-elt todo 'content) (map-elt todo 'title)))
+              ((stringp content))
+              (content (string-trim content))
+              ((not (string-empty-p content))))
+    (let ((status (and (stringp (map-elt todo 'status))
+                       (downcase (map-elt todo 'status)))))
+      (list (cons :id (map-elt todo 'id))
+            (cons :content content)
+            (cons :status
+                  (pcase status
+                    ((or "inprogress" "in_progress") "in_progress")
+                    ("completed" "completed")
+                    ((or "canceled" "cancelled") "cancelled")
+                    (_ "pending")))))))
+
+(defun agent-shell-cursor--merge-todos (current incoming merge)
+  "Combine CURRENT and INCOMING todo lists according to MERGE.
+
+When MERGE is nil, return a copy of INCOMING.  When MERGE is non-nil,
+replace matching IDs in CURRENT and append new items."
+  (if (not merge)
+      (copy-tree incoming)
+    (let ((result (copy-tree current)))
+      (dolist (todo incoming)
+        (let* ((id (map-elt todo :id))
+               (existing (and id
+                              (seq-find
+                               (lambda (item)
+                                 (equal id (map-elt item :id)))
+                               result))))
+          (if existing
+              (setcdr existing (copy-tree (cdr todo)))
+            (setq result (append result (list (copy-tree todo)))))))
+      result)))
+
+(defun agent-shell-cursor--todo-line (todo)
+  "Format one internal TODO as a display line."
+  (let* ((status (map-elt todo :status))
+         (display (pcase status
+                    ("completed" '("✓" agent-shell-success))
+                    ("in_progress" '("●" agent-shell-warning))
+                    ("cancelled" '("✕" agent-shell-error))
+                    (_ '("○" agent-shell-pending)))))
+    (format "%s %s"
+            (propertize (car display) 'font-lock-face (cadr display))
+            (map-elt todo :content))))
+
+(defun agent-shell-cursor--publish-todos (state)
+  "Display the current todo list from STATE and notify subscribers."
+  (let* ((todos (map-elt state :todos))
+         (completed (seq-count
+                     (lambda (todo)
+                       (equal (map-elt todo :status) "completed"))
+                     todos)))
+    (agent-shell--update-fragment
+     :state state
+     :namespace-id "cursor"
+     :block-id "todos"
+     :label-left "Todos"
+     :label-right (format "%s/%s completed" completed (length todos))
+     :body (if todos
+               (mapconcat #'agent-shell-cursor--todo-line todos "\n")
+             "No todos")
+     :above-last-prompt (not (map-elt state :active-requests)))
+    (agent-shell--emit-event
+     :event 'todo-update
+     :data (list (cons :todos (copy-tree todos))))))
+
+(defun agent-shell-cursor--update-todos (event)
+  "Handle a Cursor todo request or notification in EVENT."
+  (when-let* ((message (or (map-elt event :acp-request)
+                           (map-elt event :acp-notification)))
+              ((equal (map-elt message 'method) "cursor/update_todos"))
+              (state (map-elt event :state)))
+    (let ((todos (delq nil
+                       (seq-map #'agent-shell-cursor--normalize-todo
+                                (map-nested-elt message '(params todos))))))
+      (map-put! state :todos
+                (agent-shell-cursor--merge-todos
+                 (map-elt state :todos)
+                 todos
+                 (eq t (map-nested-elt message '(params merge)))))
+      (agent-shell-cursor--publish-todos state)
+      (when (map-elt event :acp-request)
+        (acp-send-response
+         :client (map-elt state :client)
+         :response `((:request-id . ,(map-elt message 'id))
+                     (:result . ,(make-hash-table)))))
+      t)))
+
 (defun agent-shell-cursor-make-agent-config ()
   "Create a Cursor agent configuration.
 
@@ -293,13 +389,19 @@ Returns an agent configuration alist using `agent-shell-make-agent-config'."
    :notification-adapter #'agent-shell-cursor--notification-adapter
    :client-capabilities '((_meta . ((subagents . t))))
    :notification-handler #'agent-shell-cursor--notification-handler
-   :request-handler #'agent-shell-subagents--legacy-task
+   :request-handler #'agent-shell-cursor--request-handler
    :install-instructions "See https://cursor.com/docs/cli for installation."))
 
 (defun agent-shell-cursor--notification-handler (event)
   "Handle Cursor extension and child-session notifications in EVENT."
-  (or (agent-shell-subagents--notification event)
+  (or (agent-shell-cursor--update-todos event)
+      (agent-shell-subagents--notification event)
       (equal (map-nested-elt event '(:acp-notification method)) "cursor/task")))
+
+(defun agent-shell-cursor--request-handler (event)
+  "Handle Cursor extension requests in EVENT."
+  (or (agent-shell-cursor--update-todos event)
+      (agent-shell-subagents--legacy-task event)))
 
 ;;;###autoload
 (defun agent-shell-cursor-start-agent ()

@@ -164,5 +164,91 @@
                            (content (type . "text")
                                     (text . "```\nhello\n```"))))))))
 
+(ert-deftest agent-shell-cursor--update-todos-replace-and-merge-test ()
+  "Replace todos, then merge updates by ID."
+  (let ((state (agent-shell--make-state))
+        published)
+    (cl-letf (((symbol-function 'agent-shell-cursor--publish-todos)
+               (lambda (updated-state)
+                 (setq published (copy-tree (map-elt updated-state :todos))))))
+      (should
+       (agent-shell-cursor--update-todos
+        `((:state . ,state)
+          (:acp-notification
+           (method . "cursor/update_todos")
+           (params
+            (merge . :json-false)
+            (todos . [((id . "one") (content . "First") (status . "pending"))
+                      ((id . "two") (content . "Second") (status . "in_progress"))]))))))
+      (should (equal published
+                     '(((:id . "one") (:content . "First") (:status . "pending"))
+                       ((:id . "two") (:content . "Second") (:status . "in_progress")))))
+      (agent-shell-cursor--update-todos
+       `((:state . ,state)
+         (:acp-notification
+          (method . "cursor/update_todos")
+          (params
+           (merge . t)
+           (todos . [((id . "one") (content . "First") (status . "completed"))
+                     ((id . "three") (title . "Third") (status . "canceled"))])))))
+      (should (equal (map-elt state :todos)
+                     '(((:id . "one") (:content . "First") (:status . "completed"))
+                       ((:id . "two") (:content . "Second") (:status . "in_progress"))
+                       ((:id . "three") (:content . "Third") (:status . "cancelled"))))))))
+
+(ert-deftest agent-shell-cursor--update-todos-request-test ()
+  "Acknowledge a Cursor todo request after the state update."
+  (let ((state (agent-shell--make-state))
+        response)
+    (cl-letf (((symbol-function 'agent-shell-cursor--publish-todos) #'ignore)
+              ((symbol-function 'acp-send-response)
+               (lambda (&rest args)
+                 (setq response (plist-get args :response)))))
+      (should
+       (agent-shell-cursor--request-handler
+        `((:state . ,state)
+          (:acp-request
+           (id . 0)
+           (method . "cursor/update_todos")
+           (params
+            (toolCallId . "call_3gAx9U34jeFxKkZMUvNiqQO4")
+            (todos . [((id . "traffic-demo-1")
+                       (content . "Inspect the Agent Shell request traffic")
+                       (status . "in_progress"))
+                      ((id . "traffic-demo-2")
+                       (content . "Verify the plan update payload")
+                       (status . "pending"))
+                      ((id . "traffic-demo-3")
+                       (content . "Confirm that task status changes appear")
+                       (status . "pending"))])
+            (merge))))))
+      (should (= 0 (map-elt response :request-id)))
+      (should (hash-table-p (map-elt response :result)))
+      (should (= 3 (length (map-elt state :todos))))
+      (should (equal (map-elt (car (map-elt state :todos)) :status)
+                     "in_progress")))))
+
+(ert-deftest agent-shell-cursor--publish-todos-test ()
+  "Render todo progress and emit the current todo state."
+  (let ((state (agent-shell--make-state))
+        fragment
+        event)
+    (map-put! state :todos
+              '(((:id . "one") (:content . "First") (:status . "completed"))
+                ((:id . "two") (:content . "Second") (:status . "in_progress"))))
+    (cl-letf (((symbol-function 'agent-shell--update-fragment)
+               (lambda (&rest args) (setq fragment args)))
+              ((symbol-function 'agent-shell--emit-event)
+               (lambda (&rest args) (setq event args))))
+      (agent-shell-cursor--publish-todos state)
+      (should (equal (plist-get fragment :label-left) "Todos"))
+      (should (equal (plist-get fragment :label-right) "1/2 completed"))
+      (should (string-match-p "First" (plist-get fragment :body)))
+      (should (string-match-p "Second" (plist-get fragment :body)))
+      (should (eq (plist-get event :event) 'todo-update))
+      (should (equal (map-elt (cadr (map-elt (plist-get event :data) :todos))
+                              :status)
+                     "in_progress")))))
+
 (provide 'agent-shell-cursor-tests)
 ;;; agent-shell-cursor-tests.el ends here
