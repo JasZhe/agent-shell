@@ -23,7 +23,8 @@
 (declare-function agent-shell--tool-call-update-output-markdown "agent-shell")
 
 (defun agent-shell-subagents--append (child text)
-  "Append TEXT to CHILD's output buffer, recreating it when killed."
+  "Append TEXT to CHILD's output buffer and scroll to the end.
+Recreate the buffer when killed."
   (unless (buffer-live-p (map-elt child :buffer))
     (map-put! child :buffer
               (generate-new-buffer (format "*Cursor subagent %s*" (map-elt child :id))))
@@ -31,9 +32,10 @@
       (special-mode)))
   (with-current-buffer (map-elt child :buffer)
     (let ((inhibit-read-only t))
-      (save-excursion
-        (goto-char (point-max))
-        (insert text)))))
+      (goto-char (point-max))
+      (insert text)
+      (dolist (window (get-buffer-window-list (current-buffer) nil t))
+        (set-window-point window (point-max))))))
 
 (defun agent-shell-subagents--publish (state child)
   "Display CHILD's status in STATE and notify subscribers."

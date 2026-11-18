@@ -12,6 +12,31 @@
     (:acp-notification (method . "session/update")
                        (params (sessionId . ,session) (update . ,update)))))
 
+(ert-deftest agent-shell-subagents-append-scroll-test ()
+  "Follow appended output in selected and unselected windows."
+  (save-window-excursion
+    (with-temp-buffer
+      (let ((child (list (cons :buffer (current-buffer))))
+            (buffer (current-buffer))
+            (window (selected-window))
+            (other-window (split-window-right)))
+        (special-mode)
+        (set-window-buffer window buffer)
+        (set-window-buffer other-window buffer)
+        (dolist (text '("First chunk\n" "Second chunk\n"))
+          (set-window-point window (point-min))
+          (set-window-point other-window (point-min))
+          (agent-shell-subagents--append child text)
+          (should (= (point) (point-max)))
+          (should (= (window-point window) (point-max)))
+          (should (= (window-point other-window) (point-max))))
+        (set-window-buffer window (other-buffer buffer t))
+        (set-window-point other-window (point-min))
+        (agent-shell-subagents--append child "Third chunk\n")
+        (should (= (window-point other-window) (point-max)))
+        (should (equal (buffer-string) "First chunk\nSecond chunk\nThird chunk\n"))
+        (should buffer-read-only)))))
+
 (ert-deftest agent-shell-subagents-capability-test ()
   "Cursor advertises child sessions without losing core capabilities."
   (let* ((state (agent-shell--make-state
